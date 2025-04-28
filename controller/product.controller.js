@@ -65,7 +65,6 @@ exports.getProducts = async (req, res) => {
         value: value,
       });
     });
-    console.log(attributeFilters);
     const products = await Product.findAll({
       where,
       include: [{ model: Attribute, as: "attributes" }],
