@@ -1,9 +1,15 @@
 const { Product, Attribute } = require("../connection/connection");
-const { Sequelize } = require("sequelize");
+const { Sequelize, Op } = require("sequelize");
 
 exports.createProduct = async (req, res) => {
   try {
     const { name, price, attributes } = req.body;
+    if (!name) {
+      return res.status(400).json({ error: "Name is Required" });
+    }
+    if (!price) {
+      return res.status(400).json({ error: "Price is Required" });
+    }
     const image = req.file ? req.file.filename : null;
     const product = await Product.create({ name, price, image });
     const attrArray = JSON.parse(attributes || "[]");
@@ -19,6 +25,7 @@ exports.createProduct = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
 exports.getProductById = async (req, res) => {
   try {
     const product = await Product.findByPk(req.params.id, {
@@ -33,69 +40,63 @@ exports.getProductById = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
+// adjust based on your structure
+
 exports.getProducts = async (req, res) => {
   try {
-    const {
-      name,
-      startDate,
-      endDate,
-      sort,
-      page = 1,
-      limit = 10,
-      ...filters
-    } = req.query;
+    const { name, startDate, endDate, sort, page, limit, ...filters } =
+      req.query;
 
     const offset = (page - 1) * limit;
     const where = {};
-    const attributeFilters = [];
 
     if (name) {
-      where.name = { [Sequelize.Op.iLike]: `%${name}%` };
+      where.name = { [Op.iLike]: `%${name}%` };
     }
+
     if (startDate && endDate) {
       where.createdAt = {
-        [Sequelize.Op.between]: [new Date(startDate), new Date(endDate)],
+        [Op.between]: [new Date(startDate), new Date(endDate)],
       };
     }
 
-    // Parse attribute filters (e.g., color, size)
-    Object.entries(filters).forEach(([key, value]) => {
-      attributeFilters.push({
+    const attributeIncludes = Object.entries(filters).map(([key, value]) => ({
+      model: Attribute,
+      as: "attributes",
+      required: true,
+      where: {
         key: key,
         value: value,
-      });
-    });
-    const products = await Product.findAll({
+      },
+    }));
+
+    // Fetch with filtering, limit, offset
+    const { count, rows } = await Product.findAndCountAll({
       where,
-      include: [{ model: Attribute, as: "attributes" }],
+      include: attributeIncludes.length
+        ? attributeIncludes
+        : [
+            {
+              model: Attribute,
+              as: "attributes",
+              required: false,
+            },
+          ],
       order: sort
         ? [["createdAt", sort.toUpperCase()]]
         : [["createdAt", "DESC"]],
+      limit: Number(limit),
+      offset: offset,
+      distinct: true,
     });
 
-    // Filter by attributes if provided
-    const filteredProducts = attributeFilters.length
-      ? products.filter((product) =>
-          attributeFilters.every((filter) =>
-            product.attributes.some(
-              (attr) => attr.key === filter.key && attr.value === filter.value
-            )
-          )
-        )
-      : products;
-
-    const paginatedProducts = filteredProducts.slice(
-      offset,
-      offset + Number(limit)
-    );
-
     res.json({
-      total: filteredProducts.length,
+      total: count,
       page: Number(page),
       limit: Number(limit),
-      totalPages: Math.ceil(filteredProducts.length / limit),
-      data: paginatedProducts,
-      message: "List Fetch successfully",
+      totalPages: Math.ceil(count / limit),
+      data: rows,
+      message: "List fetched successfully",
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -141,7 +142,6 @@ exports.getAttributeFilters = async (req, res) => {
       key,
       values: Array.from(valuesSet),
     }));
-
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
